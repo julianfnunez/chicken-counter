@@ -3,5 +3,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg tzdata c
 LABEL org.opencontainers.image.source="https://github.com/julianfnunez/chicken-counter"
 WORKDIR /app
 COPY counter.py /app/counter.py
+COPY .env.defaults /app/.env
+COPY docker-entrypoint.py /app/docker-entrypoint.py
 ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["python", "/app/docker-entrypoint.py"]
 CMD ["python", "/app/counter.py"]

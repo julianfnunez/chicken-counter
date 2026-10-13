@@ -158,3 +158,15 @@ The sample HTTP URL is for your trusted local network; HTTPS URLs use normal
 certificate verification. No blanket TLS-verification bypass is included.
 Keep the Bridge API key private. Pairing and listing lights are described here:
 https://developers.meethue.com/develop/get-started-2/
+
+## Bundled deployment defaults
+
+The Docker image contains /app/.env, copied from the non-secret .env.defaults.
+docker-entrypoint.py loads missing variables before launching counter.py.
+ZimaOS/Docker environment values take precedence, including empty values.
+The counting application remains unchanged and does not load dotenv files.
+
+The bundled settings configure two coops (3 and 1 birds), GPT-4.1, 22:00 Eastern,
+30-day retention, alerts only and Hue enabled. Supply camera URLs, API keys,
+ntfy URL, Bridge URL and light ID in ZimaOS. Set HUE_ENABLED=false if unused.
+Never put real credentials in .env.defaults; your personal .env remains ignored.
