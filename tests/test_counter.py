@@ -10,6 +10,8 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import counter
+import ai
+import notifications
 
 def frames(count=3, clear=True, n=4):
     return [{"count":count,"clear":clear,"locations":["bird"]*count,"note":""} for _ in range(n)]
@@ -25,12 +27,12 @@ class Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)/"test.jpg"
             path.write_bytes(b"image")
-            with patch.object(counter,"api_request",return_value=response) as api:
+            with patch.object(ai,"api_request",return_value=response) as api:
                 self.assertEqual(len(counter.analyze([path]*4)["frames"]),4)
                 payload = api.call_args.args[0]
                 self.assertFalse(payload["store"])
                 self.assertNotIn("expected",payload["input"][0]["content"][0]["text"])
-            with patch.object(counter,"api_request",return_value=response):
+            with patch.object(ai,"api_request",return_value=response):
                 with self.assertRaises(RuntimeError):
                     counter.analyze([path])
 
@@ -83,10 +85,10 @@ class Tests(unittest.TestCase):
 
 
     def test_hue_disabled_and_success_no_network(self):
-        with patch.dict(os.environ, {"HUE_ENABLED":"false"}), patch.object(counter.urllib.request,"urlopen") as request:
+        with patch.dict(os.environ, {"HUE_ENABLED":"false"}), patch.object(notifications.urllib.request,"urlopen") as request:
             self.assertEqual(counter.hue_alert({"status":"error"}),"disabled")
             request.assert_not_called()
-        with patch.dict(os.environ, {"HUE_ENABLED":"true"}), patch.object(counter.urllib.request,"urlopen") as request:
+        with patch.dict(os.environ, {"HUE_ENABLED":"true"}), patch.object(notifications.urllib.request,"urlopen") as request:
             self.assertEqual(counter.hue_alert({"status":"observed_expected"}),"unchanged")
             request.assert_not_called()
 
@@ -95,13 +97,15 @@ class Tests(unittest.TestCase):
         env = {"HUE_ENABLED":"true","HUE_BRIDGE_URL":"http://192.168.1.60",
                "HUE_API_KEY":"test-key","HUE_LIGHT_ID":"2"}
         reply = [{"success":{f"/lights/2/state/{k}":v}}
-                 for k,v in {"on":True,"hue":0,"sat":254,"bri":254}.items()]
-        with patch.dict(os.environ,env), patch.object(counter.urllib.request,"urlopen",return_value=io.BytesIO(json.dumps(reply).encode())) as request:
+                 for k,v in {"on":True,"hue":0,"sat":254,"bri":254,"alert":"lselect"}.items()]
+        with patch.dict(os.environ,env), patch.object(notifications.urllib.request,"urlopen",return_value=io.BytesIO(json.dumps(reply).encode())) as request:
             self.assertEqual(counter.hue_alert({"status":"check_needed"}),"red_requested")
             req = request.call_args.args[0]
             self.assertEqual(req.get_method(),"PUT")
             self.assertEqual(json.loads(req.data)["hue"],0)
-        with patch.dict(os.environ,env), patch.object(counter.urllib.request,"urlopen",return_value=io.BytesIO(b'[{"error":{"type":1}}]')):
+            self.assertEqual(json.loads(req.data)["alert"],"lselect")
+            request.assert_called_once()
+        with patch.dict(os.environ,env), patch.object(notifications.urllib.request,"urlopen",return_value=io.BytesIO(b'[{"error":{"type":1}}]')):
             with self.assertRaises(RuntimeError):
                 counter.hue_alert({"status":"error"})
 
@@ -113,6 +117,16 @@ class Tests(unittest.TestCase):
                 result = counter.run(data,db,ZoneInfo("America/New_York"))
             notify.assert_called_once()
             self.assertEqual(result["hue"],"Hue Bridge request failed")
+
+    def test_hue_off_one_request(self):
+        import io
+        env = {"HUE_BRIDGE_URL":"http://192.168.1.60","HUE_API_KEY":"test-key","HUE_LIGHT_ID":"2"}
+        reply = [{"success":{"/lights/2/state/on":False}},
+                 {"success":{"/lights/2/state/alert":"none"}}]
+        with patch.dict(os.environ,env), patch.object(notifications.urllib.request,"urlopen",return_value=io.BytesIO(json.dumps(reply).encode())) as request:
+            self.assertEqual(counter.hue_off(),"off_requested")
+            request.assert_called_once()
+            self.assertEqual(json.loads(request.call_args.args[0].data),{"on":False,"alert":"none"})
 
 if __name__ == "__main__":
     unittest.main()

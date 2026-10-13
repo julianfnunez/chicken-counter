@@ -104,12 +104,20 @@ PAGE = """<!doctype html>
 h1{margin-bottom:6px}p{line-height:1.5}.sub{color:#647368}button{background:#245e43;color:white;border:0;border-radius:9px;padding:12px 18px;cursor:pointer;font-size:15px;margin:5px 8px 5px 0}
 button:disabled{opacity:.5;cursor:wait}.card{background:white;border:1px solid #dce3d9;border-radius:14px;padding:20px;margin:16px 0}.ok{color:#247044}.warn{color:#ad5c10}.bad{color:#ba3333}.photos{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}img{width:100%;border-radius:8px}small,.meta{color:#647368}.row{display:flex;justify-content:space-between;gap:15px;align-items:center}select{padding:9px;max-width:100%}pre{white-space:pre-wrap}#error{color:#ba3333}
 </style></head><body><h1>Chicken checks</h1><p class="sub" id="schedule"></p>
-<div id="buttons"></div><p id="running" role="status"></p><p id="error"></p>
+<div id="buttons"></div><button id="hue-off" onclick="lightOff()">Turn light off</button><span id="light-status" role="status"></span><p id="running" role="status"></p><p id="error"></p>
 <div class="row"><h2 id="heading">Latest results</h2><select id="history" aria-label="Select recent check"></select></div>
 <div id="results"></div><script>
 let token="",selected=null,busy=false,configured=false;
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const label=s=>({observed_expected:"All accounted for",check_needed:"Please check",error:"Check failed"}[s]||s);
+async function lightOff(){
+const button=document.getElementById("hue-off");button.disabled=true;
+const status=document.getElementById("light-status");status.textContent=" Turning light off…";
+try{const response=await fetch("/api/hue/off",{method:"POST",headers:{"X-Check-Token":token}});
+const data=await response.json();if(!response.ok)throw Error(data.error);
+status.textContent=" Light turned off.";
+}catch(e){status.textContent=" "+e.message}
+finally{button.disabled=busy}}
 async function check(coop){document.querySelectorAll("button").forEach(b=>b.disabled=true);
 try{const r=await fetch("/api/check",{method:"POST",headers:{"Content-Type":"application/json","X-Check-Token":token},body:JSON.stringify({coop})});
 const data=await r.json();if(!r.ok)throw Error(data.error);selected=null;await refresh();
@@ -173,10 +181,21 @@ class Handler(BaseHTTPRequestHandler):
         self.send(404,{"error":"Not found"})
 
     def do_POST(self):
-        if self.path!="/api/check":
+        if self.path not in ("/api/check", "/api/hue/off"):
             return self.send(404,{"error":"Not found"})
         if self.headers.get("X-Check-Token")!=TOKEN:
             return self.send(403,{"error":"Refresh the dashboard and try again"})
+        if self.path == "/api/hue/off":
+            # Prevent an in-progress check from immediately overwriting the off command.
+            if not MUTEX.acquire(blocking=False):
+                return self.send(409, {"error": "Wait for the running check to finish"})
+            try:
+                outcome = counter.hue_off()
+                return self.send(200, {"hue": outcome})
+            except RuntimeError as exc:
+                return self.send(502, {"error": str(exc)})
+            finally:
+                MUTEX.release()
         try:
             length=int(self.headers.get("Content-Length","0"))
             if not 0 < length <= 1024:

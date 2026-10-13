@@ -2,7 +2,7 @@ FROM python:3.12-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg tzdata ca-certificates && rm -rf /var/lib/apt/lists/*
 LABEL org.opencontainers.image.source="https://github.com/julianfnunez/chicken-counter"
 WORKDIR /app
-COPY counter.py /app/counter.py
+COPY counter.py ai.py camera.py config.py notifications.py /app/
 COPY web.py /app/web.py
 COPY .env.defaults /app/.env
 COPY docker-entrypoint.py /app/docker-entrypoint.py

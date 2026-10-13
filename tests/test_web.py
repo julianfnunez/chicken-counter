@@ -35,6 +35,13 @@ class WebTests(unittest.TestCase):
                 with patch.object(web,"start",return_value=False):
                     with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(req)
                     self.assertEqual(error.exception.code,409)
+                off=urllib.request.Request(base+"/api/hue/off",b"",{"X-Check-Token":web.TOKEN})
+                with patch.object(web.counter,"hue_off",return_value="off_requested") as hue:
+                    with urllib.request.urlopen(off) as r:self.assertEqual(json.load(r)["hue"],"off_requested")
+                    hue.assert_called_once()
+                with patch.object(web.counter,"hue_off",side_effect=RuntimeError("Hue Bridge request failed")):
+                    with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(off)
+                    self.assertEqual(error.exception.code,502)
                 with urllib.request.urlopen(base+"/") as r:self.assertIn(b"Latest results",r.read())
                 with self.assertRaises(urllib.error.HTTPError):
                     urllib.request.urlopen(base+"/images/run-x/coop-1/../../counter.py")

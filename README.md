@@ -198,3 +198,24 @@ The dashboard is intended for your home network and has no login. POST check
 requests require a per-process token from the page to prevent cross-site triggering.
 It does not return connection credentials. Camera capture and model accuracy still
 require real-world validation; automated dashboard tests mock the counting run.
+
+## Hue pulse and manual off
+
+Alerts now send red and alert=lselect in one Bridge request: temporary pulsing,
+then the red state remains, without a follow-up or repeating request.
+The dashboard's Turn light off button sends on=false and alert=none in one request.
+It is available when a check is not running; a later failing check can turn the
+light red again. Successful checks still leave the light unchanged.
+
+## Source layout
+
+- counter.py: check coordination, result persistence, retention and CLI.
+- ai.py: OpenAI requests, prompt, structured output and validation.
+- camera.py: FFmpeg RTSP capture.
+- config.py: environment-based coop configuration.
+- notifications.py: readable messages, ntfy delivery and Hue commands.
+- web.py: dashboard, manual-check endpoints and nightly scheduling.
+- docker-entrypoint.py: bundled dotenv defaults and container startup.
+
+Deployment-specific defaults remain in .env.defaults. Copy all Python modules
+when testing locally; counter.py is no longer a standalone file.
