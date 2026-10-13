@@ -1,0 +1,13 @@
+services:
+  chicken-counter:
+    image: ghcr.io/julianfnunez/chicken-counter:latest
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    volumes:
+      - ./data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
