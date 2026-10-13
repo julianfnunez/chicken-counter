@@ -59,3 +59,10 @@ Check both cameras and Hue are reachable from the ZimaBoard, and HTTPS access to
 OpenAI and ntfy works. A successful count leaves Hue alone and sends no ntfy
 message when NOTIFY_SUCCESS=false. Manually clear any red test light.
 No live deployment or Docker build was performed in the development environment.
+
+## Dashboard update
+
+The image's default command is now python /app/web.py, which runs both the
+dashboard and nightly scheduler. Map port 8080 to 8080 and open http://ZIMA_IP:8080.
+This supersedes earlier statements that no ports are needed. Leave the command
+at the new default; remove any old override to counter.py.

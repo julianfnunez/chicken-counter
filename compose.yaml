@@ -4,6 +4,8 @@ services:
     build: .
     restart: unless-stopped
     init: true
+    ports:
+      - "8080:8080"
     env_file: .env
     volumes:
       - ./data:/data

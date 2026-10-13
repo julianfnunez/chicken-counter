@@ -170,3 +170,31 @@ The bundled settings configure two coops (3 and 1 birds), GPT-4.1, 22:00 Eastern
 30-day retention, alerts only and Hue enabled. Supply camera URLs, API keys,
 ntfy URL, Bridge URL and light ID in ZimaOS. Set HUE_ENABLED=false if unused.
 Never put real credentials in .env.defaults; your personal .env remains ignored.
+
+## Web dashboard
+
+The container now starts web.py, which serves the dashboard and runs the nightly
+scheduler in the same process. Publish container port 8080, then open
+http://ZIMA_IP:8080. WEB_PORT can override the internal listening port.
+
+Use Check both coops or an individual-coop button. Manual checks retain the same
+ntfy/Hue behavior as scheduled checks. The page polls every four seconds and shows
+the latest results, photos, recent 20 checks and notification outcomes.
+The list is bounded to the 20 most recent database records; older files still
+follow retention settings.
+
+Manual and nightly checks share an in-process mutex and per-run file lock.
+The scheduler does not hold a lock while idle. A separate CLI invocation still
+uses the file lock, so it cannot overlap a dashboard check.
+Dashboard history and images persist in /data. Results predating the dashboard
+may lack image links; new checks record their image folder.
+
+Update through GitHub, wait for the image build, then pull/recreate your ZimaOS
+container and add an 8080 host-to-container port mapping. Remove an old command
+override pointing at counter.py so the new default web.py is used. Keep all
+existing connection variables and the same /data mount.
+
+The dashboard is intended for your home network and has no login. POST check
+requests require a per-process token from the page to prevent cross-site triggering.
+It does not return connection credentials. Camera capture and model accuracy still
+require real-world validation; automated dashboard tests mock the counting run.
