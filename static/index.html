@@ -1,0 +1,47 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chicken checks</title><style>
+:root{font-family:system-ui,sans-serif;color:#24362e;background:#f4f6f2}body{max-width:1050px;margin:40px auto;padding:0 20px}
+h1{margin-bottom:6px}p{line-height:1.5}.sub{color:#647368}button{background:#245e43;color:white;border:0;border-radius:9px;padding:12px 18px;cursor:pointer;font-size:15px;margin:5px 8px 5px 0}
+button:disabled{opacity:.5;cursor:wait}.card{background:white;border:1px solid #dce3d9;border-radius:14px;padding:20px;margin:16px 0}.ok{color:#247044}.warn{color:#ad5c10}.bad{color:#ba3333}.photos{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}img{width:100%;border-radius:8px}small,.meta{color:#647368}.row{display:flex;justify-content:space-between;gap:15px;align-items:center}select{padding:9px;max-width:100%}pre{white-space:pre-wrap}#error{color:#ba3333}
+</style></head><body><h1>Chicken checks</h1><p class="sub" id="schedule"></p>
+<div id="buttons"></div><button id="hue-off" onclick="lightOff()">Turn light off</button><span id="light-status" role="status"></span><p id="running" role="status"></p><p id="error"></p>
+<div class="row"><h2 id="heading">Latest results</h2><select id="history" aria-label="Select recent check"></select></div>
+<div id="results"></div><script>
+let token="",selected=null,busy=false,configured=false;
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const label=s=>({observed_expected:"All accounted for",check_needed:"Please check",error:"Check failed"}[s]||s);
+async function lightOff(){
+const button=document.getElementById("hue-off");button.disabled=true;
+const status=document.getElementById("light-status");status.textContent=" Turning light off…";
+try{const response=await fetch("/api/light/off",{method:"POST",headers:{"X-Check-Token":token}});
+const data=await response.json();if(!response.ok)throw Error(data.error|| (typeof data.detail==="string"?data.detail:JSON.stringify(data.detail)));
+status.textContent=" Light turned off.";
+}catch(e){status.textContent=" "+e.message}
+finally{button.disabled=busy}}
+async function check(coop){document.querySelectorAll("button").forEach(b=>b.disabled=true);
+try{const r=await fetch("/api/checks",{method:"POST",headers:{"Content-Type":"application/json","X-Check-Token":token},body:JSON.stringify({coop_ids:coop===null?null:[coop]})});
+const data=await r.json();if(!r.ok)throw Error(data.error|| (typeof data.detail==="string"?data.detail:JSON.stringify(data.detail)));selected=null;await refresh();
+}catch(e){document.getElementById("error").textContent=e.message} }
+function render(run){const box=document.getElementById("results");if(!run){box.innerHTML='<div class="card">No checks yet. Run a check above.</div>';return}
+const r=run.result;box.innerHTML='<p class="meta">'+esc(run.created)+' · '+esc(label(run.status))+'</p>'+
+r.coops.map(c=>{let cls=c.status==="observed_expected"?"ok":c.status==="error"?"bad":"warn";
+let pics=r.image_folder?c.frames.map((f,i)=>'<div><a target="_blank" href="/images/'+encodeURIComponent(r.image_folder)+'/coop-'+c.id+'/frame-'+String(i+1).padStart(2,"0")+'.jpg"><img loading="lazy" alt="'+esc(c.name)+' frame '+(i+1)+'" src="/images/'+encodeURIComponent(r.image_folder)+'/coop-'+c.id+'/frame-'+String(i+1).padStart(2,"0")+'.jpg"></a><p><strong>'+f.count+' visible</strong> · '+(f.clear?'Clear':'Unclear')+'</p><small>'+esc(f.locations.join("; "))+'</small><p>'+esc(f.note)+'</p></div>').join(""):"";
+return '<section class="card"><h2>'+esc(c.name)+'</h2><p class="'+cls+'"><strong>'+esc(label(c.status))+'</strong> · Expected '+c.expected+' · Counts ['+c.frames.map(f=>f.count).join(",")+']</p>'+
+(c.error?'<p class="bad">'+esc(c.error)+'</p>':'')+'<div class="photos">'+pics+'</div></section>'}).join("")+
+'<p class="meta">ntfy: '+esc(r.notification)+' · Hue: '+esc(r.hue)+'</p>'}
+async function refresh(){try{const response=await fetch("/api/status");if(!response.ok)throw Error("Could not load dashboard");
+const d=await response.json();token=d.token;busy=d.running;
+const resultsResponse=await fetch("/api/results");if(!resultsResponse.ok)throw Error("Could not load results");d.history=await resultsResponse.json();
+document.getElementById("schedule").textContent="Nightly at "+d.time+" · "+d.timezone;
+if(!configured){const b=document.getElementById("buttons");const all=document.createElement("button");all.textContent="Check both coops";all.onclick=()=>check(null);b.append(all);
+d.coops.forEach(c=>{const el=document.createElement("button");el.textContent="Check "+c.name;el.onclick=()=>check(c.id);b.append(el)});configured=true;}
+document.querySelectorAll("button").forEach(b=>b.disabled=busy);
+document.getElementById("running").textContent=busy?(d.active_job.progress||"Check running…"):"";
+document.getElementById("error").textContent=d.error||"";
+const list=document.getElementById("history");list.innerHTML='<option value="">Latest check</option>'+d.history.map(r=>'<option value="'+r.id+'">'+esc(r.created)+' · '+esc(label(r.status))+'</option>').join("");
+list.value=selected||"";render(selected?d.history.find(r=>r.id===Number(selected)):d.history[0]);
+}catch(e){document.getElementById("error").textContent=e.message}}
+document.getElementById("history").onchange=e=>{selected=e.target.value||null;refresh()};
+refresh();setInterval(refresh,4000);
+</script></body></html>

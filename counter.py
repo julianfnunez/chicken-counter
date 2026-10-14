@@ -27,7 +27,7 @@ def summary_status(coops):
         return "observed_expected"
     return "check_needed"
 
-def run(data, db, zone, scheduled=False, images=None, coop_id=None):
+def run(data, db, zone, scheduled=False, images=None, coop_id=None, coop_ids=None, progress=None):
     now = dt.datetime.now(zone)
     folder = data / ("run-" + now.strftime("%Y%m%d-%H%M%S-%f"))
     folder.mkdir()
@@ -36,6 +36,8 @@ def run(data, db, zone, scheduled=False, images=None, coop_id=None):
         configured = [c for c in configured if c["id"] == coop_id]
         if not configured:
             raise ValueError("Selected coop is not configured")
+    if coop_ids is not None:
+        configured = [c for c in configured if c["id"] in coop_ids]
     result = {"created": now.isoformat(), "status": "error", "coops": []}
     for config in configured:
         coop = {"id": config["id"], "name": config["name"], "expected": config["expected"],
@@ -43,9 +45,15 @@ def run(data, db, zone, scheduled=False, images=None, coop_id=None):
         coop_folder = folder / f"coop-{config['id']}"
         coop_folder.mkdir()
         try:
+            if progress:
+                progress(f"Capturing {config['name']}")
             paths = images if images else capture(coop_folder, config["url"])
             # Each frame is a fresh independent request.
-            analyses = [analyze([path]) for path in paths]
+            analyses = []
+            for index, path in enumerate(paths, 1):
+                if progress:
+                    progress(f"Counting {config['name']}: frame {index}/{len(paths)}")
+                analyses.append(analyze([path]))
             coop["frames"] = [a["frames"][0] for a in analyses]
             coop["usage"] = [a["usage"] for a in analyses]
             coop["model"] = analyses[0]["model"]
@@ -54,7 +62,10 @@ def run(data, db, zone, scheduled=False, images=None, coop_id=None):
             coop["error"] = str(exc) if isinstance(exc, RuntimeError) else f"Processing failed ({type(exc).__name__})"
         (coop_folder / "result.json").write_text(json.dumps(coop, indent=2))
         result["coops"].append(coop)
+    result["image_folder"] = folder.name
     result["status"] = summary_status(result["coops"])
+    if progress:
+        progress("Sending alerts and saving results")
     try:
         result["hue"] = hue_alert(result)
     except RuntimeError as exc:

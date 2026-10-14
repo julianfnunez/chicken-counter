@@ -1,221 +1,130 @@
-# Nightly chicken counter for ZimaBoard 2 / ZimaOS
+# Chicken Counter
 
-A Docker service captures four RTSP frames about ten seconds apart, analyzes each frame in a separate OpenAI Responses API request, and records individual counts. The expected count is deliberately withheld from the model. Four clear matching counts produce “expected count observed”; any discrepancy or ambiguity asks you to inspect the camera. Camera and API failures are recorded as errors. This is a visual check, not proof that every chicken is safely inside.
+Checks RTSP camera images to confirm the expected number of chickens in each coop.
+Run checks from a web dashboard or on a nightly schedule. Unexpected or unclear
+counts and camera/API errors can trigger an ntfy notification and a red Hue light.
 
-Defaults: two coops (3 chickens in the main coop, 1 in the separate pen), 10 PM America/New_York, 30-day retention. Change these to match the birds expected in this particular coop. A model can confidently miscount overlapping birds, so review initial nightly results before relying on alerts.
+## How it works
 
-## Install on your ZimaBoard
+FFmpeg captures four frames per coop, about ten seconds apart. Each frame is sent
+individually to OpenAI for a count and bird locations. A coop passes when all four
+frames are clear and match its expected count; every coop must pass independently.
 
-Download and extract this ZIP, then copy the chicken-counter folder to a persistent data folder on your ZimaBoard using its file manager or network share. Open a terminal on the ZimaBoard, or SSH into it if SSH is enabled. Run the following commands from that folder:
+FastAPI serves the dashboard and REST API. A shared background service executes
+manual and scheduled checks, prevents overlapping runs, and records job progress.
+SQLite stores results; captured images are retained alongside them in /data.
+
+The dashboard shows recent results and images, runs checks for all or selected
+coops, and turns the Hue light off. Hue alerts pulse briefly, then remain red,
+using one Bridge request. Successful checks leave the light unchanged.
+
+Counts are estimates. Validate empty and occupied images from each camera,
+including night vision, before relying on alerts.
+
+## Install on ZimaOS
+
+Use this Docker image:
+
+    ghcr.io/julianfnunez/chicken-counter:latest
+
+Configure the container:
+
+- Map host port 8080 to container port 8080.
+- Mount a persistent folder, such as /DATA/AppData/chicken-counter, to /data.
+- Set restart policy to unless-stopped and keep the default command.
+- Supply your API key, camera URLs, and desired notification connection settings.
+
+Open http://ZIMA_IP:8080. Interactive API documentation is at /docs.
+
+The image includes non-secret settings from .env.defaults. Container environment
+variables override those values. Personal credentials belong in the container
+configuration or your local .env, not in the repository.
+
+### Docker Compose
+
+Copy .env.example to .env and fill in your connection settings:
 
     cp .env.example .env
-    chmod 600 .env
-    nano .env
+    docker compose -f compose.registry.yaml up -d
 
-Set each COOP_n_RTSP_URL to the camera's actual stream URL. The example path is a placeholder. URL-encode special characters in the camera username/password. Keep the value single-quoted. Set OPENAI_API_KEY to your own OpenAI API key and verify each COOP_n_EXPECTED_CHICKENS. API billing is separate from your ChatGPT subscription; add API credit/billing in the OpenAI dashboard. Never paste the key into chat.
+To update the image:
 
-The default model is gpt-4.1, a configurable starting point; verify model access and assess counting quality with your own nighttime images. Set a different vision/structured-output compatible model through OPENAI_MODEL if needed. No model-specific price estimate is assumed.
+    docker compose -f compose.registry.yaml pull
+    docker compose -f compose.registry.yaml up -d
 
-Build and perform a live check before starting the scheduler:
+To build from source instead:
 
-    docker compose build
-    docker compose run --rm chicken-counter python /app/counter.py --once
+    docker compose up -d --build
 
-Inspect the JSON result and the four JPEGs in data/run-*/. Confirm that the field of view includes all roosts and floor areas. Then start:
+## Configuration
 
-    docker compose up -d
-    docker compose logs --tail=50 -f
+| Variable | Purpose / bundled default |
+| --- | --- |
+| OPENAI_API_KEY | Required OpenAI API key; API billing is separate from ChatGPT |
+| COOP_1_RTSP_URL, COOP_2_RTSP_URL | Required camera stream URLs |
+| OPENAI_MODEL | gpt-4.1 |
+| COOP_COUNT | 2; supports 1–20 coops |
+| COOP_n_NAME | Coop 1 / Coop 2 |
+| COOP_n_EXPECTED_CHICKENS | 3 / 1; required for additional coops |
+| CHECK_TIME | 22:00, in 24-hour format |
+| TZ | America/New_York, including daylight saving |
+| RETENTION_DAYS | 30 |
+| NTFY_URL | Full topic URL; empty disables notifications |
+| NTFY_TOKEN | Optional authentication token |
+| NOTIFY_SUCCESS | false; true also sends successful checks |
+| HUE_ENABLED | true; set false when Hue is unused |
+| HUE_BRIDGE_URL | Local Bridge URL, e.g. http://192.168.1.60 |
+| HUE_API_KEY | Bridge-issued API username/key |
+| HUE_LIGHT_ID | Numeric v1 ID of a color-capable light |
+| WEB_PORT | 8080 |
+| DATA_DIR | /data |
 
-The container needs LAN access to the camera and outbound HTTPS to api.openai.com (and your notification server if enabled). It exposes no web port and needs no privileged mode. The build requires internet access for the Python image and Debian packages. Use a terminal with Docker access; if Docker reports permission denied, use your ZimaOS administrator terminal or sudo as appropriate.
+A scheduled check runs once per local date. Starting after CHECK_TIME triggers
+today's check if it has not been attempted. Failed or interrupted scheduled jobs
+are recorded and are not automatically retried that night.
 
-If your ZimaOS app installer cannot build local Dockerfiles, use the terminal commands above. This package intentionally does not assume a particular ZimaOS GUI version or import format.
+## Run locally in Linux / WSL
 
-## Phone notifications (optional)
+Requires Python 3.10+ and FFmpeg.
 
-Install ntfy on your phone and subscribe to your chosen topic/server. Configure NTFY_URL as the full topic URL, for example https://your-ntfy-server.example/chickens, and NTFY_TOKEN if authentication is required. Follow your server's access-control setup and verify both publishing and phone delivery. An unprotected public topic can be read or spoofed by others who know its name.
+    sudo apt install python3-venv ffmpeg
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+    cp .env.example .env
 
-NOTIFY_SUCCESS=false (the default) sends discrepancies/errors only. Set true to send a message after every check. Leaving NTFY_URL empty disables notifications. Images are not attached to notifications. Notification delivery failures are logged and stored, but cannot be reported through the same failed notification channel. Check the logs periodically.
-
-## Operations
-
-Run another immediate check while the scheduler is active:
-
-    docker compose stop
-    docker compose run --rm chicken-counter python /app/counter.py --once
-    docker compose up -d
-
-A shared file lock prevents simultaneous runs against the same data folder. Manual checks do not suppress that evening's scheduled run.
-
-Test local pictures without the camera (put JPG/PNG files in a samples folder):
-
-    docker compose stop
-    docker compose run --rm -v ./samples:/samples:ro chicken-counter python /app/counter.py --images /samples/a.jpg /samples/b.jpg /samples/c.jpg /samples/d.jpg
-    docker compose up -d
-
-A single image can be analyzed but is always marked check_needed. Local sample files remain in samples; this mode does not copy them into retained run folders.
-
-Change settings by editing .env and recreating:
-
-    docker compose up -d --force-recreate
-
-Stop the service:
-
-    docker compose down
-
-The data folder survives container replacement. Back it up if needed. history.sqlite contains counts, model/usage metadata and notification outcome; run folders contain JPEGs and result.json. Images and history older than RETENTION_DAYS are deleted after a run. No secret values are deliberately written to results or logs. Docker administrators can inspect the container environment and FFmpeg process arguments; protect host access and .env.
-
-The scheduler uses the configured local timezone, including daylight saving. Restarting after CHECK_TIME performs one late check if today's scheduled result is absent. Restarting before CHECK_TIME waits. A failed scheduled check is recorded and is not retried that night; this bounds API spending and duplicate notifications. API requests retry transient errors up to three attempts, which can incur additional charges if a response was lost. A crash before a result is committed can cause a repeated check on restart. No historical nights are backfilled.
-
-## Troubleshooting
-
-- Camera error: verify RTSP is enabled, credentials/path, camera wake behavior and LAN reachability. Test the stream in VLC on the same network. The capture timeout is 75 seconds.
-- HTTP 401: API key invalid. HTTP 429: quota, billing or rate limit. HTTP 400: request/model compatibility. Model output validation errors: review samples and try a compatible model.
-- check_needed: review all four images and location descriptions. Overlap can produce a consistent undercount; changing the camera angle often helps.
-- No nightly record: check container status, logs, CHECK_TIME/TZ, and writable data volume.
-- No phone message: verify NTFY_URL, token, topic subscription and phone background notification settings.
-
-## Development and verification
-
-Python's standard library handles HTTP, SQLite and scheduling; FFmpeg handles RTSP. No Python package installation is needed.
-
-    python -m unittest discover -s tests -v
-
-Tests mock the API/camera and cover count disagreement, unclear images, malformed results, persistence and failure notification handling. They do not establish real-world vision accuracy. A live camera/API check is required after configuration.
-
-Official API references:
-https://developers.openai.com/api/docs/guides/images-vision
-https://developers.openai.com/api/docs/guides/structured-outputs
-
-## Multiple coops and updating an existing install
-
-Replace counter.py with this version; keep your existing .env and data. Add:
-
-    COOP_COUNT=2
-    COOP_1_NAME='Main coop'
-    COOP_1_EXPECTED_CHICKENS=3
-    COOP_1_RTSP_URL='your-main-coop-RTSP-URL'
-    COOP_2_NAME='Separate pen'
-    COOP_2_EXPECTED_CHICKENS=1
-    COOP_2_RTSP_URL='your-separate-pen-RTSP-URL'
-
-COOP_COUNT selects consecutive coop IDs from 1 through that number (maximum 20).
-Expected counts may be zero. If COOP_COUNT is absent, the old RTSP_URL and
-EXPECTED_CHICKENS settings still work for one coop. With COOP_COUNT present,
-the numbered settings are authoritative.
-
-Every coop is checked even if another camera or API check fails. Results live
-in data/run-*/coop-1/ and coop-2/, with one overall result.json and database row.
-Overall success requires every coop to pass independently. Notifications combine
-all coops into one message. NTFY_URL can remain empty; SMS is not implemented.
-
-WSL, without Docker:
+Edit .env, then start:
 
     set -a
+    source .env.defaults
     source .env
     set +a
-    DATA_DIR=./data python3 counter.py --once
+    DATA_DIR=./data python web.py
 
-Test a particular camera:
+Open http://localhost:8080. Stop with Ctrl+C.
 
-    DATA_DIR=./data python3 counter.py --once --coop 2
+CLI checks:
 
-Test saved images against a particular coop's expected count:
+    DATA_DIR=./data python counter.py --once
+    DATA_DIR=./data python counter.py --once --coop 2
+    DATA_DIR=./data python counter.py --coop 1 --images ./samples/frame-*.jpg
+    python counter.py --test-hue
 
-    DATA_DIR=./data python3 counter.py --coop 1 --images ./samples/frame-*.jpg
+## API and development
 
-Selected-coop runs are manual only and do not affect the nightly schedule.
-Two coops with four frames each make eight API requests per full check, before
-transient retries. Each frame request is independent; agreement does not guarantee
-accuracy. Test both occupied and empty images for each camera.
+See [API.md](API.md) for endpoints and job states.
 
-## Optional Hue light alert
+- web.py and static/index.html: REST endpoints and dashboard.
+- service.py and scheduler.py: jobs, concurrency, and nightly triggers.
+- counter.py: check coordination, persistence, and retention.
+- ai.py, camera.py, notifications.py: external integrations.
+- config.py: coop configuration.
+- docker-entrypoint.py: bundled defaults.
 
-Add HUE_ENABLED=false, HUE_BRIDGE_URL, HUE_API_KEY and HUE_LIGHT_ID to
-your existing .env (see .env.example). This uses the local Hue v1 REST API.
-After pairing the Bridge and identifying your living-room color light, set
-HUE_ENABLED=true and reload the environment or recreate the Docker container.
+Run tests:
 
-When any checked coop needs inspection or has a capture/API error, the selected
-light is switched on at full brightness and set to solid red. Success leaves
-the light unchanged. Clear it manually in the Hue app or with your usual controls.
-Manual single-coop and saved-image checks also trigger this behavior when enabled.
-An unreachable Bridge or rejected command is recorded under the overall result's
-hue field and does not prevent ntfy delivery. red_requested means the Bridge
-confirmed the requested settings, not proof that the physical bulb changed.
+    pip install -r requirements-dev.txt
+    python -m unittest discover -s tests -v
 
-Test without capturing pictures or spending API credit:
-
-    DATA_DIR=./data python3 counter.py --test-hue
-
-Docker equivalent:
-
-    docker compose run --rm chicken-counter python /app/counter.py --test-hue
-
-This test bypasses camera and coop configuration and turns the light red immediately.
-No Bridge connection is made while HUE_ENABLED=false. HUE_LIGHT_ID is the numeric
-v1 light ID, not a v2 UUID or the name of a room. Use a color-capable Hue light.
-The sample HTTP URL is for your trusted local network; HTTPS URLs use normal
-certificate verification. No blanket TLS-verification bypass is included.
-Keep the Bridge API key private. Pairing and listing lights are described here:
-https://developers.meethue.com/develop/get-started-2/
-
-## Bundled deployment defaults
-
-The Docker image contains /app/.env, copied from the non-secret .env.defaults.
-docker-entrypoint.py loads missing variables before launching counter.py.
-ZimaOS/Docker environment values take precedence, including empty values.
-The counting application remains unchanged and does not load dotenv files.
-
-The bundled settings configure two coops (3 and 1 birds), GPT-4.1, 22:00 Eastern,
-30-day retention, alerts only and Hue enabled. Supply camera URLs, API keys,
-ntfy URL, Bridge URL and light ID in ZimaOS. Set HUE_ENABLED=false if unused.
-Never put real credentials in .env.defaults; your personal .env remains ignored.
-
-## Web dashboard
-
-The container now starts web.py, which serves the dashboard and runs the nightly
-scheduler in the same process. Publish container port 8080, then open
-http://ZIMA_IP:8080. WEB_PORT can override the internal listening port.
-
-Use Check both coops or an individual-coop button. Manual checks retain the same
-ntfy/Hue behavior as scheduled checks. The page polls every four seconds and shows
-the latest results, photos, recent 20 checks and notification outcomes.
-The list is bounded to the 20 most recent database records; older files still
-follow retention settings.
-
-Manual and nightly checks share an in-process mutex and per-run file lock.
-The scheduler does not hold a lock while idle. A separate CLI invocation still
-uses the file lock, so it cannot overlap a dashboard check.
-Dashboard history and images persist in /data. Results predating the dashboard
-may lack image links; new checks record their image folder.
-
-Update through GitHub, wait for the image build, then pull/recreate your ZimaOS
-container and add an 8080 host-to-container port mapping. Remove an old command
-override pointing at counter.py so the new default web.py is used. Keep all
-existing connection variables and the same /data mount.
-
-The dashboard is intended for your home network and has no login. POST check
-requests require a per-process token from the page to prevent cross-site triggering.
-It does not return connection credentials. Camera capture and model accuracy still
-require real-world validation; automated dashboard tests mock the counting run.
-
-## Hue pulse and manual off
-
-Alerts now send red and alert=lselect in one Bridge request: temporary pulsing,
-then the red state remains, without a follow-up or repeating request.
-The dashboard's Turn light off button sends on=false and alert=none in one request.
-It is available when a check is not running; a later failing check can turn the
-light red again. Successful checks still leave the light unchanged.
-
-## Source layout
-
-- counter.py: check coordination, result persistence, retention and CLI.
-- ai.py: OpenAI requests, prompt, structured output and validation.
-- camera.py: FFmpeg RTSP capture.
-- config.py: environment-based coop configuration.
-- notifications.py: readable messages, ntfy delivery and Hue commands.
-- web.py: dashboard, manual-check endpoints and nightly scheduling.
-- docker-entrypoint.py: bundled dotenv defaults and container startup.
-
-Deployment-specific defaults remain in .env.defaults. Copy all Python modules
-when testing locally; counter.py is no longer a standalone file.
+GitHub Actions tests and publishes the Docker image on pushes to main and version
+tags. See [PUBLISH-GITHUB.md](PUBLISH-GITHUB.md) for registry setup.

@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Install test dependencies
+        run: python3 -m pip install -r requirements-dev.txt
       - name: Run tests
         run: python3 -m unittest discover -s tests -v
       - name: Log in to GHCR
